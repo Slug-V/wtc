@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="勤務配分">
+<meta name="theme-color" content="#11151c">
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'%3E%3Crect width='180' height='180' rx='40' fill='%2311151c'/%3E%3Ctext x='90' y='120' font-size='90' text-anchor='middle' fill='%23e8c47a' font-family='sans-serif' font-weight='700'%3E6h%3C/text%3E%3C/svg%3E">
+<link rel="manifest" href="data:application/json,%7B%22name%22%3A%22%E5%8B%A4%E5%8B%99%E9%85%8D%E5%88%86%22%2C%22short_name%22%3A%22%E5%8B%A4%E5%8B%99%E9%85%8D%E5%88%86%22%2C%22start_url%22%3A%22.%22%2C%22display%22%3A%22standalone%22%2C%22background_color%22%3A%22%2311151c%22%2C%22theme_color%22%3A%22%2311151c%22%7D">
+<title>勤務配分</title>
+<style>
+  :root{
+    --bg:#11151c; --bg2:#171d27; --card:#1d2531; --line:#2b3543;
+    --ink:#e7ecf3; --dim:#8a97a8; --faint:#5a6675;
+    --gold:#e8c47a;     /* 6h / 残枠 */
+    --steel:#7fb0e0;    /* 8h / ノルマ */
+    --ot:#d98a6a;       /* 残業 */
+    --bad:#c8546a;      /* 欠勤 */
+    --ok:#6fcf97;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{margin:0;height:100%;}
+  body{
+    background:var(--bg); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Hiragino Kaku Gothic ProN",sans-serif;
+    display:flex; flex-direction:column;
+    min-height:100vh; min-height:100dvh;
+    padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+    overscroll-behavior:none;
+  }
+  .wrap{flex:1;display:flex;flex-direction:column;max-width:430px;width:100%;margin:0 auto;}
+
+  /* ---- header ---- */
+  header{display:flex;align-items:baseline;justify-content:space-between;padding:14px 18px 6px;}
+  .ym{font-size:15px;color:var(--dim);font-weight:600;letter-spacing:.02em;}
+  .ym b{color:var(--ink);font-weight:700;}
+  .gear{background:none;border:none;color:var(--faint);font-size:20px;padding:6px;cursor:pointer;}
+
+  /* ---- metric ---- */
+  .metric{padding:8px 18px 14px;text-align:center;}
+  .mlabel{font-size:13px;letter-spacing:.08em;font-weight:700;text-transform:none;}
+  .mlabel.gold{color:var(--gold);}
+  .mlabel.steel{color:var(--steel);}
+  .mlabel.ot{color:var(--ot);}
+  .mbig{font-variant-numeric:tabular-nums;font-weight:800;line-height:.95;margin-top:2px;}
+  .mbig .num{font-size:74px;}
+  .mbig .unit{font-size:22px;color:var(--dim);font-weight:700;margin-left:4px;}
+  .msub{font-size:12.5px;color:var(--faint);margin-top:6px;min-height:1.2em;}
+
+  .earned{margin:12px auto 0;display:inline-flex;align-items:baseline;gap:10px;
+    padding:7px 16px;border:1px solid var(--line);border-radius:999px;background:var(--bg2);}
+  .earned .el{font-size:11.5px;color:var(--dim);letter-spacing:.04em;}
+  .earned .ev{font-size:18px;font-weight:800;color:var(--ok);font-variant-numeric:tabular-nums;}
+
+  /* gauge for overtime month */
+  .gauge{margin:6px auto 0;width:84%;height:14px;border-radius:8px;background:var(--bg2);
+    border:1px solid var(--line);overflow:hidden;}
+  .gauge>i{display:block;height:100%;background:linear-gradient(90deg,var(--ot),#f0a986);width:0;transition:width .35s ease;}
+  .gnums{font-variant-numeric:tabular-nums;font-size:13px;color:var(--dim);margin-top:7px;}
+  .gnums b{color:var(--ot);font-weight:800;font-size:16px;}
+
+  /* ---- today strip ---- */
+  .today{margin:2px 18px 0;padding:10px 14px;background:var(--card);border:1px solid var(--line);
+    border-radius:12px;display:flex;align-items:center;justify-content:space-between;}
+  .today .d{font-size:13px;color:var(--dim);font-variant-numeric:tabular-nums;}
+  .today .v{font-size:14px;font-weight:700;}
+  .today .v.none{color:var(--faint);font-weight:600;}
+
+  /* ---- buttons ---- */
+  .pad{margin-top:auto;padding:14px 14px calc(10px + env(safe-area-inset-bottom));}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+  button.b{
+    border:1px solid var(--line);background:var(--card);color:var(--ink);
+    border-radius:16px;padding:18px 10px;font-size:19px;font-weight:800;
+    cursor:pointer;font-family:inherit;transition:transform .05s, background .15s;
+    display:flex;flex-direction:column;align-items:center;gap:3px;
+  }
+  button.b small{font-size:11px;font-weight:600;color:var(--faint);letter-spacing:.02em;}
+  button.b:active{transform:scale(.97);}
+  button.b.six{border-color:#5a4a2a;}
+  button.b.six .t{color:var(--gold);}
+  button.b.eight{border-color:#2f4a63;}
+  button.b.eight .t{color:var(--steel);}
+  button.b.ot{border-color:#5a3a2c;}
+  button.b.ot .t{color:var(--ot);}
+  button.b.absent{border-color:#5a2f3a;}
+  button.b.absent .t{color:var(--bad);}
+  .t{font-size:20px;}
+  .otrow{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:10px;}
+  .otrow button.b{padding:14px 4px;font-size:15px;}
+  .otrow button.b .t{font-size:15px;}
+
+  .recorded{margin-top:10px;text-align:center;font-size:13px;color:var(--ok);min-height:1.3em;font-weight:600;}
+
+  /* ---- footer actions ---- */
+  .foot{display:flex;gap:10px;margin-top:12px;}
+  .foot button{flex:1;background:none;border:1px solid var(--line);color:var(--dim);
+    border-radius:12px;padding:11px;font-size:13px;font-weight:600;font-family:inherit;cursor:pointer;}
+  .foot button:active{background:var(--bg2);}
+
+  /* ---- sheet (history / settings) ---- */
+  .sheet-bg{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;z-index:20;}
+  .sheet-bg.on{display:block;}
+  .sheet{position:fixed;left:0;right:0;bottom:0;z-index:21;background:var(--bg2);
+    border-top-left-radius:20px;border-top-right-radius:20px;border-top:1px solid var(--line);
+    max-width:430px;margin:0 auto;transform:translateY(100%);transition:transform .28s ease;
+    max-height:86vh;display:flex;flex-direction:column;
+    padding-bottom:env(safe-area-inset-bottom);}
+  .sheet.on{transform:translateY(0);}
+  .sheet h2{font-size:16px;margin:0;padding:16px 18px 4px;font-weight:700;}
+  .sheet .hint{font-size:12px;color:var(--faint);padding:0 18px 8px;}
+  .sheet-scroll{overflow-y:auto;-webkit-overflow-scrolling:touch;padding:4px 14px 16px;}
+  .sheet .close{position:absolute;top:12px;right:14px;background:none;border:none;color:var(--dim);font-size:22px;cursor:pointer;}
+
+  .hrow{display:flex;align-items:center;justify-content:space-between;gap:8px;
+    padding:11px 12px;border:1px solid var(--line);border-radius:12px;margin-bottom:8px;background:var(--card);}
+  .hrow .hd{font-size:13px;color:var(--dim);font-variant-numeric:tabular-nums;min-width:88px;}
+  .hrow .hv{font-size:14px;font-weight:700;flex:1;}
+  .hrow select{background:var(--bg);color:var(--ink);border:1px solid var(--line);
+    border-radius:9px;padding:8px;font-size:13px;font-family:inherit;}
+  .tag{font-size:11px;padding:2px 7px;border-radius:6px;font-weight:700;}
+  .tag.six{background:#3a2f18;color:var(--gold);}
+  .tag.eight{background:#1c3043;color:var(--steel);}
+  .tag.ot{background:#3a261c;color:var(--ot);}
+  .tag.absent{background:#3a1c26;color:var(--bad);}
+  .tag.none{background:#222b36;color:var(--faint);}
+
+  .setrow{padding:12px;border:1px solid var(--line);border-radius:12px;margin-bottom:10px;background:var(--card);}
+  .setrow .k{font-size:12px;color:var(--faint);margin-bottom:6px;}
+  .setrow .vv{font-size:14px;color:var(--ink);font-variant-numeric:tabular-nums;}
+  .setbtn{width:100%;background:var(--card);border:1px solid var(--line);color:var(--ink);
+    border-radius:12px;padding:13px;font-size:14px;font-weight:700;font-family:inherit;cursor:pointer;margin-bottom:9px;}
+  .setbtn:active{background:var(--bg);}
+  .setbtn.warn{color:var(--bad);border-color:#5a2f3a;}
+  #importFile{display:none;}
+  .msg{font-size:12px;color:var(--ok);text-align:center;min-height:1.2em;margin-top:4px;}
+
+  /* end-time picker for 端数 */
+  .picker{display:flex;align-items:center;justify-content:center;gap:6px;margin-top:8px;}
+  .picker input{width:64px;background:var(--bg);color:var(--ink);border:1px solid var(--line);
+    border-radius:10px;padding:10px;font-size:18px;text-align:center;font-family:inherit;font-variant-numeric:tabular-nums;}
+  .picker span{color:var(--dim);font-size:14px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="ym"><b id="ymY">—</b> <span id="ymM"></span></div>
+    <button class="gear" id="openSettings" aria-label="設定">⚙</button>
+  </header>
+
+  <div class="metric" id="metric"><!-- filled by JS --></div>
+
+  <div class="today">
+    <span class="d" id="todayDate">—</span>
+    <span class="v none" id="todayVal">未記録</span>
+  </div>
+
+  <div class="pad">
+    <div class="grid">
+      <button class="b six" data-act="6h"><span class="t">6h</span><small>6時間勤務 / 有休</small></button>
+      <button class="b eight" data-act="8h"><span class="t">8h</span><small>8時間勤務</small></button>
+    </div>
+    <div class="otrow" id="otRow" style="display:none">
+      <button class="b ot" data-act="8h2h"><span class="t">+2h</span><small>残業2h</small></button>
+      <button class="b ot" data-act="8h1h"><span class="t">+1h</span><small>残業1h</small></button>
+      <button class="b ot" data-act="8hX"><span class="t">+端数</span><small>分指定</small></button>
+    </div>
+    <div class="grid" style="margin-top:10px">
+      <button class="b absent" data-act="absent" style="grid-column:1 / -1;"><span class="t">欠勤</span><small>無給・他日で要補填</small></button>
+    </div>
+
+    <div class="recorded" id="recorded"></div>
+
+    <div class="foot">
+      <button id="openHistory">記録の訂正</button>
+    </div>
+  </div>
+</div>
+
+<!-- HISTORY SHEET -->
+<div class="sheet-bg" id="histBg"></div>
+<div class="sheet" id="histSheet">
+  <button class="close" data-close="hist">×</button>
+  <h2>記録の訂正</h2>
+  <div class="hint">直近14日。タップで種別を選び直せます。</div>
+  <div class="sheet-scroll" id="histList"></div>
+</div>
+
+<!-- SETTINGS SHEET -->
+<div class="sheet-bg" id="setBg"></div>
+<div class="sheet" id="setSheet">
+  <button class="close" data-close="set">×</button>
+  <h2>設定・バックアップ</h2>
+  <div class="sheet-scroll">
+    <div class="setrow">
+      <div class="k">時給（この端末にのみ保存）</div>
+      <div class="picker" style="justify-content:flex-start;margin-top:2px">
+        <span style="color:var(--dim)">¥</span>
+        <input type="number" id="wageInput" min="0" step="1" inputmode="numeric" placeholder="未設定" style="width:120px">
+        <button class="setbtn" id="wageSave" style="width:auto;margin:0;padding:10px 16px">保存</button>
+      </div>
+      <div class="k" style="margin-top:8px;margin-bottom:0">未入力なら金額は一切表示しません。公開リポジトリに金額は残りません。</div>
+    </div>
+    <div class="setrow">
+      <div class="k">基準</div>
+      <div class="vv">基準日数 18日（月ごとの勤務日数はアプリ内蔵）</div>
+    </div>
+    <div class="setrow">
+      <div class="k">記録件数</div>
+      <div class="vv" id="recCount">—</div>
+    </div>
+    <button class="setbtn" id="exportBtn">JSONを書き出す（ファイルに保存）</button>
+    <button class="setbtn" id="importBtn">JSONを読み込む（復元）</button>
+    <input type="file" id="importFile" accept="application/json,.json">
+    <div class="msg" id="setMsg"></div>
+    <button class="setbtn warn" id="wipeBtn">全データを消去</button>
+  </div>
+</div>
+
+<!-- 端数入力 modal -->
+<div class="sheet-bg" id="fracBg"></div>
+<div class="sheet" id="fracSheet" style="max-height:auto">
+  <button class="close" data-close="frac">×</button>
+  <h2>端数残業を記録</h2>
+  <div class="hint">8時間勤務に加える残業時間を分で指定（1分刻み）。</div>
+  <div class="sheet-scroll">
+    <div class="picker">
+      <input type="number" id="fracMin" min="1" max="240" step="1" inputmode="numeric" value="48">
+      <span>分の残業</span>
+    </div>
+    <button class="setbtn" id="fracSave" style="margin-top:14px">この内容で記録</button>
+  </div>
+</div>
+
+<script>
+/* ============================================================
+   勤務配分 PWA — 単一ファイル / localStorage
+   ============================================================ */
+
+/* --- 年度データ（JSONハードコード）---------------------------
+   mode: "6h-quota"  = 6h残枠モード（残り「6hにできる日数」を表示）
+         "8h-quota"  = 8hノルマモード（残り「8hにすべき日数」を表示）
+         "overtime"  = 残業ノルマ月（割増ゲージ表示）
+   workdays   : その月の総勤務日数
+   sixDays    : 6h化日数（=月内で6hにすべき日数）
+   eightDays  : 8h勤務日数（=workdays - sixDays）
+   otHours    : 要残業時間（残業ノルマ月のみ。割増前の必要残業h）
+   端数: otHours は時間単位の実残業。消化は分単位で積算する。
+--------------------------------------------------------------- */
+const BASE_DAYS = 18;
+/* 時給・月給はハードコードしない（公開リポジトリに金額を残さない）。
+   時給のみユーザー入力。月給は計算には用いず、参考表示も時給未入力時は伏せる。 */
+const SETTINGS_KEY = "worktime.settings.v1";
+function loadSettings(){
+  try{ return JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}; }
+  catch(e){ return {}; }
+}
+function saveSettings(s){ localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); }
+let settings = loadSettings();
+function getWage(){ const w=Number(settings.wage); return (w>0)?w:null; }
+const YEAR_DATA = {
+  "2026-04": {mode:"6h-quota", workdays:20, sixDays:8,  eightDays:12},
+  "2026-05": {mode:"6h-quota", workdays:18, sixDays:0,  eightDays:18},
+  "2026-06": {mode:"8h-quota", workdays:22, sixDays:16, eightDays:6},
+  "2026-07": {mode:"8h-quota", workdays:23, sixDays:20, eightDays:3},
+  "2026-08": {mode:"overtime", workdays:16, otHours:12.8},
+  "2026-09": {mode:"8h-quota", workdays:22, sixDays:16, eightDays:6},
+  "2026-10": {mode:"8h-quota", workdays:22, sixDays:16, eightDays:6},
+  "2026-11": {mode:"8h-quota", workdays:21, sixDays:12, eightDays:9},
+  "2026-12": {mode:"6h-quota", workdays:19, sixDays:4,  eightDays:15},
+  "2027-01": {mode:"6h-quota", workdays:18, sixDays:0,  eightDays:18},
+  "2027-02": {mode:"6h-quota", workdays:20, sixDays:8,  eightDays:12},
+  "2027-03": {mode:"8h-quota", workdays:23, sixDays:20, eightDays:3},
+};
+
+const STORE_KEY = "worktime.records.v1";
+
+/* records: { "YYYY-MM-DD": "6h"|"8h"|"8h2h"|"8h1h"|"absent"|{k:"8hX",min:48} } */
+function loadRecords(){
+  try{ return JSON.parse(localStorage.getItem(STORE_KEY)) || {}; }
+  catch(e){ return {}; }
+}
+function saveRecords(r){ localStorage.setItem(STORE_KEY, JSON.stringify(r)); }
+let records = loadRecords();
+
+/* ---- date helpers (local time) ---- */
+function pad(n){return String(n).padStart(2,"0");}
+function todayKey(){
+  const d=new Date();
+  return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate());
+}
+function monthKey(dk){ return dk.slice(0,7); }
+function fmtDate(dk){
+  const [y,m,d]=dk.split("-").map(Number);
+  const wd=["日","月","火","水","木","金","土"][new Date(y,m-1,d).getDay()];
+  return `${m}/${d}（${wd}）`;
+}
+
+/* ---- record label ---- */
+function recKind(v){ return (v && typeof v==="object") ? v.k : v; }
+function recLabel(v){
+  const k=recKind(v);
+  switch(k){
+    case "6h": return "6h";
+    case "8h": return "8h";
+    case "8h2h": return "8h ＋残業2h";
+    case "8h1h": return "8h ＋残業1h";
+    case "8hX": return `8h ＋残業${v.min}分`;
+    case "absent": return "欠勤";
+    default: return "未記録";
+  }
+}
+function recTagClass(v){
+  const k=recKind(v);
+  if(k==="6h") return "six";
+  if(k==="8h") return "eight";
+  if(k==="absent") return "absent";
+  if(k&&k.startsWith("8h")) return "ot";
+  return "none";
+}
+
+/* ============================================================
+   月内集計 → ダッシュボードのメトリクス
+   ============================================================ */
+function computeMonth(mk){
+  const data = YEAR_DATA[mk];
+  if(!data) return null;
+  const wage = getWage();
+  // その月の記録を集計
+  let six=0, eight=0, absent=0, otMin=0, earned=0;
+  function pay(hours){ return wage ? hours*wage : 0; }
+  for(const [dk,v] of Object.entries(records)){
+    if(monthKey(dk)!==mk) continue;
+    const k=recKind(v);
+    if(k==="6h"){ six++; earned+=pay(6); }            // 6h契約：有休も6h相当で確定
+    else if(k==="8h"){ eight++; earned+=pay(8); }
+    else if(k==="absent"){ absent++; /* 無給：0円 */ }
+    else if(k==="8h2h"){ eight++; otMin+=120; earned+=pay(8)+pay(2)*1.25; }
+    else if(k==="8h1h"){ eight++; otMin+=60;  earned+=pay(8)+pay(1)*1.25; }
+    else if(k==="8hX"){ eight++; const mn=(v.min||0); otMin+=mn; earned+=pay(8)+pay(mn/60)*1.25; }
+  }
+  return {data, six, eight, absent, otMin, earned, wage};
+}
+
+/* 残枠/ノルマ/残業ゲージの計算 */
+function metricFor(mk){
+  const c = computeMonth(mk);
+  if(!c) return {type:"none"};
+  const {data, six, eight, absent, otMin} = c;
+
+  if(data.mode==="overtime"){
+    // 要残業（割増前h）。欠勤は8h=480分の追加残業ノルマを上乗せ。
+    const targetMin = Math.round(data.otHours*60) + absent*480;
+    const doneMin = otMin;
+    const remainMin = Math.max(0, targetMin - doneMin);
+    return {type:"overtime", targetMin, doneMin, remainMin};
+  }
+
+  // 6h-quota / 8h-quota は同一状態の別表示。
+  // 必要6h日数 = sixDays + 欠勤による上積み。
+  // 欠勤1日 = 6h枠を1消費 + 6h相当を他日で埋める(=6h必要日数 +3)。差し引き必要6h日数 +? 
+  // モデル：欠勤は「必要6h日数」を実質増やす方向。
+  //   6h残枠 = (必要6h日数) - (実績6h日数)
+  //   必要6h日数 = sixDays + absent*? 
+  // ユーザー定義：6h残枠月の欠勤で残枠が計4減る = 必要6h日数を据え置き、実績側で「欠勤=6h枠1消費 + 3日分の埋戻し」を反映。
+  // 実装：消費済み = six + absent*1(枠消費) + absent*3(埋戻し) としても残枠=必要-消費で4減る。
+  const requiredSix = data.sixDays;
+  const consumedSix = six + absent*4;        // 欠勤1日で残枠4減
+  const sixRemain = requiredSix - consumedSix;
+
+  const requiredEight = data.eightDays;
+  // 8hノルマは6h枠の裏。6hを押すとノルマ据え置き(消化されない)。
+  // ノルマ残 = requiredEight - (実績8h) ＋ 欠勤の上積み(裏側で+3)。
+  const eightRemain = requiredEight - eight + absent*3;
+
+  if(data.mode==="6h-quota"){
+    return {type:"6h-quota", remain:sixRemain, required:requiredSix, mk};
+  }else{
+    return {type:"8h-quota", remain:eightRemain, required:requiredEight, mk};
+  }
+}
+
+/* ============================================================
+   レンダリング
+   ============================================================ */
+function render(){
+  const dk = todayKey();
+  const mk = monthKey(dk);
+  const data = YEAR_DATA[mk];
+  const [y,m] = mk.split("-");
+
+  document.getElementById("ymY").textContent = y;
+  document.getElementById("ymM").textContent = Number(m)+"月";
+
+  // today strip
+  document.getElementById("todayDate").textContent = fmtDate(dk);
+  const tv = records[dk];
+  const tvEl = document.getElementById("todayVal");
+  tvEl.textContent = recLabel(tv);
+  tvEl.className = "v " + (tv? "" : "none");
+
+  // overtime buttons only in overtime month
+  document.getElementById("otRow").style.display =
+    (data && data.mode==="overtime") ? "grid" : "none";
+
+  // metric
+  const mEl = document.getElementById("metric");
+  if(!data){
+    mEl.innerHTML = `<div class="msub">この月のデータは未登録です。</div>`;
+    return;
+  }
+  const M = metricFor(mk);
+  const c = computeMonth(mk);
+
+  if(M.type==="overtime"){
+    const pct = M.targetMin>0 ? Math.min(100, M.doneMin/M.targetMin*100) : 0;
+    const remH = (M.remainMin/60);
+    mEl.innerHTML = `
+      <div class="mlabel ot">残業ノルマ（割増1.25倍）</div>
+      <div class="gauge"><i style="width:${pct}%"></i></div>
+      <div class="gnums">残り <b>${remH.toFixed(1)}</b> h ／ 必要 ${(M.targetMin/60).toFixed(1)} h</div>
+      <div class="msub">8月は無理に平準化しない判断も可。</div>
+      ${earnedHTML(c)}`;
+    return;
+  }
+
+  if(M.type==="6h-quota"){
+    const n = M.remain;
+    mEl.innerHTML = `
+      <div class="mlabel gold">6h残枠</div>
+      <div class="mbig"><span class="num" style="color:var(--gold)">${n}</span><span class="unit">日</span></div>
+      <div class="msub">あと${n>0?n:0}日を6hにすれば月給一定。残りは8h。</div>
+      ${earnedHTML(c)}`;
+  }else{
+    const n = M.remain;
+    mEl.innerHTML = `
+      <div class="mlabel steel">8hノルマ</div>
+      <div class="mbig"><span class="num" style="color:var(--steel)">${n}</span><span class="unit">日</span></div>
+      <div class="msub">あと${n>0?n:0}日を8hにすれば月給一定。残りは6h。</div>
+      ${earnedHTML(c)}`;
+  }
+}
+
+/* 確定額の行（時給未入力なら空文字＝何も出さない） */
+function earnedHTML(c){
+  if(!c || !c.wage) return "";
+  const yen = Math.round(c.earned).toLocaleString("ja-JP");
+  return `<div class="earned"><span class="el">今月の確定額</span>
+            <span class="ev">¥${yen}</span></div>`;
+}
+
+/* ============================================================
+   記録アクション
+   ============================================================ */
+function setRecord(dk, value){
+  if(value===null || value===undefined) delete records[dk];
+  else records[dk]=value;
+  saveRecords(records);
+  render();
+}
+
+function flash(msg){
+  const el=document.getElementById("recorded");
+  el.textContent=msg;
+  clearTimeout(flash._t);
+  flash._t=setTimeout(()=>{el.textContent="";},2200);
+}
+
+document.querySelectorAll("button.b").forEach(btn=>{
+  btn.addEventListener("click",()=>{
+    const act=btn.dataset.act;
+    const dk=todayKey();
+    if(act==="8hX"){ openSheet("frac"); return; }
+    setRecord(dk, act);
+    flash("記録しました：" + recLabel(records[dk]));
+  });
+});
+
+/* 端数 */
+document.getElementById("fracSave").addEventListener("click",()=>{
+  let mins=parseInt(document.getElementById("fracMin").value,10);
+  if(isNaN(mins)||mins<1) mins=1;
+  if(mins>240) mins=240;
+  const dk=todayKey();
+  setRecord(dk, {k:"8hX", min:mins});
+  closeSheet("frac");
+  flash("記録しました：" + recLabel(records[dk]));
+});
+
+/* ============================================================
+   履歴（訂正）— 直近14日
+   ============================================================ */
+const KIND_OPTIONS = [
+  ["", "未記録"],
+  ["6h","6h / 有休"],
+  ["8h","8h"],
+  ["8h2h","8h ＋残業2h"],
+  ["8h1h","8h ＋残業1h"],
+  ["absent","欠勤"],
+];
+function buildHistory(){
+  const list=document.getElementById("histList");
+  list.innerHTML="";
+  const today=new Date();
+  for(let i=0;i<14;i++){
+    const d=new Date(today); d.setDate(today.getDate()-i);
+    const dk=d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate());
+    const v=records[dk];
+    const row=document.createElement("div");
+    row.className="hrow";
+
+    const left=document.createElement("div");
+    left.className="hd";
+    left.textContent=fmtDate(dk);
+
+    const tag=document.createElement("span");
+    tag.className="tag "+recTagClass(v);
+    tag.textContent=recLabel(v);
+
+    const sel=document.createElement("select");
+    KIND_OPTIONS.forEach(([val,lab])=>{
+      const o=document.createElement("option");
+      o.value=val; o.textContent=lab;
+      if(recKind(v)===val || (val===""&&!v)) o.selected=true;
+      // 端数は select では「8h＋残業」をまとめ扱いにせず、現状値があれば別表示
+      sel.appendChild(o);
+    });
+    // 端数記録は選択肢に無いので、現値が8hXなら一時オプション追加
+    if(recKind(v)==="8hX"){
+      const o=document.createElement("option");
+      o.value="8hX"; o.textContent=`8h ＋残業${v.min}分（現在値）`; o.selected=true;
+      sel.appendChild(o);
+    }
+    sel.addEventListener("change",()=>{
+      const nv=sel.value;
+      if(nv==="") setRecord(dk,null);
+      else if(nv==="8hX"){ /* 現値維持 */ }
+      else setRecord(dk,nv);
+      tag.className="tag "+recTagClass(records[dk]);
+      tag.textContent=recLabel(records[dk]);
+    });
+
+    row.appendChild(left);
+    row.appendChild(tag);
+    row.appendChild(sel);
+    list.appendChild(row);
+  }
+}
+
+/* ============================================================
+   シート開閉
+   ============================================================ */
+function openSheet(which){
+  const bg=document.getElementById(which+"Bg") || document.getElementById( {hist:"histBg",set:"setBg",frac:"fracBg"}[which]);
+  const sheet=document.getElementById({hist:"histSheet",set:"setSheet",frac:"fracSheet"}[which]);
+  const bgEl=document.getElementById({hist:"histBg",set:"setBg",frac:"fracBg"}[which]);
+  if(which==="hist") buildHistory();
+  if(which==="set") refreshSettings();
+  bgEl.classList.add("on");
+  requestAnimationFrame(()=>sheet.classList.add("on"));
+}
+function closeSheet(which){
+  const sheet=document.getElementById({hist:"histSheet",set:"setSheet",frac:"fracSheet"}[which]);
+  const bgEl=document.getElementById({hist:"histBg",set:"setBg",frac:"fracBg"}[which]);
+  sheet.classList.remove("on");
+  setTimeout(()=>bgEl.classList.remove("on"),260);
+}
+document.getElementById("openHistory").addEventListener("click",()=>openSheet("hist"));
+document.getElementById("openSettings").addEventListener("click",()=>openSheet("set"));
+document.querySelectorAll("[data-close]").forEach(b=>
+  b.addEventListener("click",()=>closeSheet(b.dataset.close)));
+document.querySelectorAll(".sheet-bg").forEach(bg=>
+  bg.addEventListener("click",e=>{ if(e.target===bg){
+    if(bg.id==="histBg")closeSheet("hist");
+    if(bg.id==="setBg")closeSheet("set");
+    if(bg.id==="fracBg")closeSheet("frac");
+  }}));
+
+/* ============================================================
+   設定・バックアップ
+   ============================================================ */
+function refreshSettings(){
+  document.getElementById("recCount").textContent = Object.keys(records).length + " 件";
+  const w=getWage();
+  document.getElementById("wageInput").value = w!==null ? w : "";
+  document.getElementById("setMsg").style.color="var(--ok)";
+  document.getElementById("setMsg").textContent="";
+}
+document.getElementById("wageSave").addEventListener("click",()=>{
+  const raw=document.getElementById("wageInput").value.trim();
+  if(raw===""){ delete settings.wage; }
+  else{
+    const w=Number(raw);
+    if(!(w>0)){ document.getElementById("setMsg").style.color="var(--bad)";
+      document.getElementById("setMsg").textContent="正しい金額を入力してください。"; return; }
+    settings.wage=w;
+  }
+  saveSettings(settings); render();
+  document.getElementById("setMsg").style.color="var(--ok)";
+  document.getElementById("setMsg").textContent = settings.wage? "時給を保存しました。" : "時給を未設定にしました。";
+});
+document.getElementById("exportBtn").addEventListener("click",()=>{
+  const payload={app:"worktime", version:1, exported:new Date().toISOString(), records, settings};
+  const blob=new Blob([JSON.stringify(payload,null,2)],{type:"application/json"});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a");
+  const stamp=todayKey();
+  a.href=url; a.download=`worktime-backup-${stamp}.json`;
+  document.body.appendChild(a); a.click();
+  setTimeout(()=>{document.body.removeChild(a);URL.revokeObjectURL(url);},100);
+  document.getElementById("setMsg").textContent="書き出しました。ファイルアプリに保存できます。";
+});
+document.getElementById("importBtn").addEventListener("click",()=>
+  document.getElementById("importFile").click());
+document.getElementById("importFile").addEventListener("change",ev=>{
+  const f=ev.target.files[0]; if(!f) return;
+  const reader=new FileReader();
+  reader.onload=()=>{
+    try{
+      const obj=JSON.parse(reader.result);
+      const rec=obj.records||obj; // 寛容に
+      if(typeof rec!=="object") throw new Error("形式が不正です");
+      records=rec; saveRecords(records);
+      if(obj.settings && typeof obj.settings==="object"){ settings=obj.settings; saveSettings(settings); }
+      render(); refreshSettings();
+      document.getElementById("setMsg").textContent="読み込みました（"+Object.keys(records).length+"件）。";
+    }catch(e){
+      document.getElementById("setMsg").style.color="var(--bad)";
+      document.getElementById("setMsg").textContent="読み込み失敗："+e.message;
+    }
+    ev.target.value="";
+  };
+  reader.readAsText(f);
+});
+document.getElementById("wipeBtn").addEventListener("click",()=>{
+  if(confirm("全ての勤務記録を消去します（時給設定は残ります）。元に戻せません。よろしいですか？")){
+    records={}; saveRecords(records); render(); refreshSettings();
+    document.getElementById("setMsg").style.color="var(--ok)";
+    document.getElementById("setMsg").textContent="勤務記録を消去しました。";
+  }
+});
+
+/* 端数入力 modal の bg id 補正（fracBg） */
+/* 初期描画 */
+render();
+
+/* 日付変更に追従（アプリ復帰時に再描画） */
+document.addEventListener("visibilitychange",()=>{ if(!document.hidden) render(); });
+</script>
+</body>
+</html>
