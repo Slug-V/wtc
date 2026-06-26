@@ -221,6 +221,7 @@
         <input type="number" id="wageInput" min="0" step="1" inputmode="numeric" placeholder="未設定" style="width:120px">
         <button class="setbtn" id="wageSave" style="width:auto;margin:0;padding:10px 16px">保存</button>
       </div>
+      <div class="msg" id="wageMsg" style="text-align:left"></div>
       <div class="k" style="margin-top:8px;margin-bottom:0">未入力なら金額は一切表示しません。公開リポジトリに金額は残りません。</div>
     </div>
     <div class="setrow">
@@ -231,6 +232,7 @@
         <label>休憩 終了<input type="time" class="schin" id="schBreakEnd"></label>
       </div>
       <button class="setbtn" id="schSave" style="margin-top:10px;margin-bottom:0">勤務時間帯を保存</button>
+      <div class="msg" id="schMsg" style="text-align:left"></div>
       <div class="k" style="margin-top:8px;margin-bottom:0">8h以上の日のみ休憩を無給として差し引き。6hの日は休憩なしで連続計算。未設定ならリアルタイム表示はしません。エクスポートJSONにも含まれます。</div>
     </div>
     <div class="setrow">
@@ -742,14 +744,16 @@ function refreshSettings(){
   document.getElementById("schStart").value      = sc.start||"";
   document.getElementById("schBreakStart").value = sc.breakStart||"";
   document.getElementById("schBreakEnd").value   = sc.breakEnd||"";
-  document.getElementById("setMsg").style.color="var(--ok)";
-  document.getElementById("setMsg").textContent="";
+  // 各セクションの保存メッセージはシートを開くたびにクリア
+  ["setMsg","wageMsg","schMsg"].forEach(id=>{
+    const e=document.getElementById(id); e.style.color="var(--ok)"; e.textContent="";
+  });
 }
 document.getElementById("schSave").addEventListener("click",()=>{
   const st=document.getElementById("schStart").value;
   const bs=document.getElementById("schBreakStart").value;
   const be=document.getElementById("schBreakEnd").value;
-  const msg=document.getElementById("setMsg");
+  const msg=document.getElementById("schMsg");   // 保存ボタン直下に表示
   if(st===""){
     delete settings.schedule; saveSettings(settings); render();
     msg.style.color="var(--ok)"; msg.textContent="勤務時間帯を未設定にしました。"; return;
@@ -768,17 +772,17 @@ document.getElementById("schSave").addEventListener("click",()=>{
   msg.style.color="var(--ok)"; msg.textContent="勤務時間帯を保存しました。";
 });
 document.getElementById("wageSave").addEventListener("click",()=>{
+  const msg=document.getElementById("wageMsg");   // 保存ボタン直下に表示
   const raw=document.getElementById("wageInput").value.trim();
   if(raw===""){ delete settings.wage; }
   else{
     const w=Number(raw);
-    if(!(w>0)){ document.getElementById("setMsg").style.color="var(--bad)";
-      document.getElementById("setMsg").textContent="正しい金額を入力してください。"; return; }
+    if(!(w>0)){ msg.style.color="var(--bad)"; msg.textContent="正しい金額を入力してください。"; return; }
     settings.wage=w;
   }
   saveSettings(settings); render();
-  document.getElementById("setMsg").style.color="var(--ok)";
-  document.getElementById("setMsg").textContent = settings.wage? "時給を保存しました。" : "時給を未設定にしました。";
+  msg.style.color="var(--ok)";
+  msg.textContent = settings.wage? "時給を保存しました。" : "時給を未設定にしました。";
 });
 document.getElementById("exportBtn").addEventListener("click",()=>{
   const payload={app:"worktime", version:1, exported:new Date().toISOString(), records, settings};
