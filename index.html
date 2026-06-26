@@ -54,6 +54,19 @@
   .earned .el{font-size:11.5px;color:var(--dim);letter-spacing:.04em;}
   .earned .ev{font-size:18px;font-weight:800;color:var(--ok);font-variant-numeric:tabular-nums;}
 
+  /* today's live earnings pill */
+  .todayEarn{margin:8px 18px 0;display:flex;align-items:baseline;justify-content:center;gap:10px;
+    padding:8px 16px;border:1px solid var(--line);border-radius:999px;background:var(--bg2);}
+  .todayEarn .tel{font-size:11.5px;color:var(--dim);letter-spacing:.04em;}
+  .todayEarn .tev{font-size:20px;font-weight:800;color:var(--gold);font-variant-numeric:tabular-nums;}
+  .todayEarn .tet{font-size:11px;color:var(--faint);font-weight:600;}
+
+  /* schedule inputs (settings) */
+  .schgrid{display:flex;flex-direction:column;gap:8px;margin-top:6px;}
+  .schgrid label{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:13px;color:var(--dim);}
+  .schin{background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:9px;
+    padding:9px 10px;font-size:15px;font-family:inherit;font-variant-numeric:tabular-nums;}
+
   /* gauge for overtime month */
   .gauge{margin:6px auto 0;width:84%;height:14px;border-radius:8px;background:var(--bg2);
     border:1px solid var(--line);overflow:hidden;}
@@ -158,6 +171,12 @@
     <span class="v none" id="todayVal">未記録</span>
   </div>
 
+  <div class="todayEarn" id="todayEarn" style="display:none">
+    <span class="tel">今日の発生額</span>
+    <span class="tev" id="todayEarnVal">¥0</span>
+    <span class="tet" id="todayEarnStat"></span>
+  </div>
+
   <div class="pad">
     <div class="grid">
       <button class="b six" data-act="6h"><span class="t">6h</span><small>6時間勤務 / 有休</small></button>
@@ -203,6 +222,16 @@
         <button class="setbtn" id="wageSave" style="width:auto;margin:0;padding:10px 16px">保存</button>
       </div>
       <div class="k" style="margin-top:8px;margin-bottom:0">未入力なら金額は一切表示しません。公開リポジトリに金額は残りません。</div>
+    </div>
+    <div class="setrow">
+      <div class="k">勤務時間帯（この端末にのみ保存）</div>
+      <div class="schgrid">
+        <label>始業<input type="time" class="schin" id="schStart"></label>
+        <label>休憩 開始<input type="time" class="schin" id="schBreakStart"></label>
+        <label>休憩 終了<input type="time" class="schin" id="schBreakEnd"></label>
+      </div>
+      <button class="setbtn" id="schSave" style="margin-top:10px;margin-bottom:0">勤務時間帯を保存</button>
+      <div class="k" style="margin-top:8px;margin-bottom:0">8h以上の日のみ休憩を無給として差し引き。6hの日は休憩なしで連続計算。未設定ならリアルタイム表示はしません。エクスポートJSONにも含まれます。</div>
     </div>
     <div class="setrow">
       <div class="k">基準</div>
@@ -323,6 +352,104 @@ function recTagClass(v){
 }
 
 /* ============================================================
+   勤務時間帯 & 今日の発生額（リアルタイム）
+   時間帯は settings.schedule={start,breakStart,breakEnd}（HH:MM文字列）。
+   金額同様コードに数値は持たず、端末のみ保存・export/importは settings 経由で自動対応。
+   終業は種別から算出：6h=連続360分／8h系=480分＋休憩(無給)＋残業(1.25倍)。
+   ============================================================ */
+function parseHM(s){
+  if(!s || typeof s!=="string") return null;
+  const m=s.match(/^(\d{1,2}):(\d{2})$/);
+  if(!m) return null;
+  const h=+m[1], mi=+m[2];
+  if(h<0||h>23||mi<0||mi>59) return null;
+  return h*60+mi;                       // 0時からの分
+}
+function getSchedule(){
+  const s=settings.schedule;
+  if(!s) return null;
+  const start=parseHM(s.start);
+  if(start===null) return null;
+  let bs=parseHM(s.breakStart), be=parseHM(s.breakEnd);
+  if(bs===null||be===null||be<=bs){ bs=null; be=null; }   // 休憩未設定/不正は無休憩扱い
+  return {start, breakStart:bs, breakEnd:be};
+}
+/* 種別→支払対象の基本分/残業分/休憩有無。absent・未記録は null（稼ぎなし＝表示しない） */
+function kindMinutes(v){
+  const k=recKind(v);
+  if(k==="6h")   return {base:360, ot:0,          hasBreak:false};
+  if(k==="8h")   return {base:480, ot:0,          hasBreak:true};
+  if(k==="8h1h") return {base:480, ot:60,         hasBreak:true};
+  if(k==="8h2h") return {base:480, ot:120,        hasBreak:true};
+  if(k==="8hX")  return {base:480, ot:(v.min||0), hasBreak:true};
+  return null;
+}
+/* 時計上の加算セグメント（分単位, rate=円/分）。休憩中は隙間にして加算停止を表現 */
+function buildTimeline(v, sch, wage){
+  const km=kindMinutes(v);
+  if(!km || !sch || !wage) return null;
+  const baseRate=wage/60, otRate=baseRate*1.25;
+  const start=sch.start;
+  const segs=[];
+  let baseEnd, breakBand=null;
+  const useBreak = km.hasBreak && sch.breakStart!==null
+                   && sch.breakStart>start && (sch.breakStart-start)<km.base;
+  if(useBreak){
+    const before = sch.breakStart - start;      // 休憩前の支払分
+    const after  = km.base - before;            // 休憩後の支払分
+    segs.push({from:start,        to:sch.breakStart,     rate:baseRate});
+    segs.push({from:sch.breakEnd, to:sch.breakEnd+after, rate:baseRate});
+    baseEnd = sch.breakEnd + after;
+    breakBand=[sch.breakStart, sch.breakEnd];
+  }else{
+    segs.push({from:start, to:start+km.base, rate:baseRate});
+    baseEnd = start+km.base;
+  }
+  if(km.ot>0) segs.push({from:baseEnd, to:baseEnd+km.ot, rate:otRate});   // 残業は割増
+  return {segs, start, end:segs[segs.length-1].to, breakBand};
+}
+function earnedAt(segs, nowMin){
+  let sum=0;
+  for(const s of segs){
+    if(nowMin<=s.from) break;                   // segsは時刻順。以降はまだ発生しない
+    sum += (Math.min(nowMin,s.to)-s.from)*s.rate;
+  }
+  return sum;
+}
+function nowMinutes(){
+  const d=new Date();
+  return d.getHours()*60 + d.getMinutes() + d.getSeconds()/60;  // 秒で滑らかに
+}
+function todayEarnState(){
+  const wage=getWage(), sch=getSchedule(), v=records[todayKey()];
+  if(!wage || !sch || !v) return {show:false};
+  const tl=buildTimeline(v, sch, wage);
+  if(!tl) return {show:false};                  // 欠勤・未記録など
+  const nm=nowMinutes();
+  const earned=earnedAt(tl.segs, nm);
+  let stat, active;
+  if(nm < tl.start){ stat="開始前"; active=true; }
+  else if(nm >= tl.end){ stat="本日終了"; active=false; }
+  else if(tl.breakBand && nm>=tl.breakBand[0] && nm<tl.breakBand[1]){ stat="休憩中"; active=true; }
+  else { stat="勤務中"; active=true; }
+  return {show:true, earned, stat, active};
+}
+let _ticker=null;
+function startTicker(){ if(_ticker || document.hidden) return; _ticker=setInterval(refreshTodayEarn,1000); }
+function stopTicker(){ if(_ticker){ clearInterval(_ticker); _ticker=null; } }
+function refreshTodayEarn(){
+  const el=document.getElementById("todayEarn");
+  if(!el) return;
+  const st=todayEarnState();
+  if(!st.show){ el.style.display="none"; stopTicker(); return; }
+  el.style.display="";
+  document.getElementById("todayEarnVal").textContent =
+    "¥"+Math.round(st.earned).toLocaleString("ja-JP");
+  document.getElementById("todayEarnStat").textContent = st.stat;
+  if(st.active) startTicker(); else stopTicker();
+}
+
+/* ============================================================
    月内集計 → ダッシュボードのメトリクス
    ============================================================ */
 function computeMonth(mk){
@@ -401,6 +528,9 @@ function render(){
   const tvEl = document.getElementById("todayVal");
   tvEl.textContent = recLabel(tv);
   tvEl.className = "v " + (tv? "" : "none");
+
+  // 今日の発生額（時間帯・時給が揃っていればリアルタイム表示）
+  refreshTodayEarn();
 
   // overtime buttons only in overtime month
   document.getElementById("otRow").style.display =
@@ -586,9 +716,35 @@ function refreshSettings(){
   document.getElementById("recCount").textContent = Object.keys(records).length + " 件";
   const w=getWage();
   document.getElementById("wageInput").value = w!==null ? w : "";
+  const sc=settings.schedule||{};
+  document.getElementById("schStart").value      = sc.start||"";
+  document.getElementById("schBreakStart").value = sc.breakStart||"";
+  document.getElementById("schBreakEnd").value   = sc.breakEnd||"";
   document.getElementById("setMsg").style.color="var(--ok)";
   document.getElementById("setMsg").textContent="";
 }
+document.getElementById("schSave").addEventListener("click",()=>{
+  const st=document.getElementById("schStart").value;
+  const bs=document.getElementById("schBreakStart").value;
+  const be=document.getElementById("schBreakEnd").value;
+  const msg=document.getElementById("setMsg");
+  if(st===""){
+    delete settings.schedule; saveSettings(settings); render();
+    msg.style.color="var(--ok)"; msg.textContent="勤務時間帯を未設定にしました。"; return;
+  }
+  if(parseHM(st)===null){
+    msg.style.color="var(--bad)"; msg.textContent="始業時刻を正しく入力してください。"; return;
+  }
+  if((bs==="")!==(be==="")){
+    msg.style.color="var(--bad)"; msg.textContent="休憩は開始・終了の両方を入力してください（無休憩なら両方空）。"; return;
+  }
+  if(bs!=="" && be!=="" && !(parseHM(be)>parseHM(bs))){
+    msg.style.color="var(--bad)"; msg.textContent="休憩の終了は開始より後にしてください。"; return;
+  }
+  settings.schedule={start:st, breakStart:bs, breakEnd:be};
+  saveSettings(settings); render();
+  msg.style.color="var(--ok)"; msg.textContent="勤務時間帯を保存しました。";
+});
 document.getElementById("wageSave").addEventListener("click",()=>{
   const raw=document.getElementById("wageInput").value.trim();
   if(raw===""){ delete settings.wage; }
@@ -648,7 +804,10 @@ document.getElementById("wipeBtn").addEventListener("click",()=>{
 render();
 
 /* 日付変更に追従（アプリ復帰時に再描画） */
-document.addEventListener("visibilitychange",()=>{ if(!document.hidden) render(); });
+document.addEventListener("visibilitychange",()=>{
+  if(!document.hidden){ render(); }    // 復帰時に再描画＆ticker再開
+  else { stopTicker(); }               // 非表示中は加算を止める（電池節約）
+});
 </script>
 </body>
 </html>
