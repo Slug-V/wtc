@@ -420,6 +420,15 @@ function nowMinutes(){
   const d=new Date();
   return d.getHours()*60 + d.getMinutes() + d.getSeconds()/60;  // 秒で滑らかに
 }
+/* 今日の金額を「今月確定額」へ算入してよいか。
+   時間帯未設定なら従来どおり即時計上。設定済みなら勤務完走（終業時刻到達）後のみ確定。 */
+function todayMoneyConfirmed(){
+  const sch=getSchedule();
+  if(!sch) return true;
+  const tl=buildTimeline(records[todayKey()], sch, getWage()||1);
+  if(!tl) return true;                 // 欠勤など（金額0）は確定扱いでよい
+  return nowMinutes() >= tl.end;
+}
 function todayEarnState(){
   const wage=getWage(), sch=getSchedule(), v=records[todayKey()];
   if(!wage || !sch || !v) return {show:false};
@@ -427,26 +436,36 @@ function todayEarnState(){
   if(!tl) return {show:false};                  // 欠勤・未記録など
   const nm=nowMinutes();
   const earned=earnedAt(tl.segs, nm);
+  const done = nm >= tl.end;                     // 勤務完走＝確定
   let stat, active;
-  if(nm < tl.start){ stat="開始前"; active=true; }
-  else if(nm >= tl.end){ stat="本日終了"; active=false; }
+  if(done){ stat="本日終了"; active=false; }
+  else if(nm < tl.start){ stat="開始前"; active=true; }
   else if(tl.breakBand && nm>=tl.breakBand[0] && nm<tl.breakBand[1]){ stat="休憩中"; active=true; }
   else { stat="勤務中"; active=true; }
-  return {show:true, earned, stat, active};
+  return {show:true, earned, stat, active, done};
 }
-let _ticker=null;
+let _ticker=null, _lastDone=null;
 function startTicker(){ if(_ticker || document.hidden) return; _ticker=setInterval(refreshTodayEarn,1000); }
 function stopTicker(){ if(_ticker){ clearInterval(_ticker); _ticker=null; } }
 function refreshTodayEarn(){
   const el=document.getElementById("todayEarn");
   if(!el) return;
   const st=todayEarnState();
-  if(!st.show){ el.style.display="none"; stopTicker(); return; }
+  if(!st.show){ el.style.display="none"; stopTicker(); _lastDone=null; return; }
   el.style.display="";
-  document.getElementById("todayEarnVal").textContent =
-    "¥"+Math.round(st.earned).toLocaleString("ja-JP");
-  document.getElementById("todayEarnStat").textContent = st.stat;
+  const valEl=document.getElementById("todayEarnVal");
+  valEl.textContent = "¥"+Math.round(st.earned).toLocaleString("ja-JP");
+  if(st.done){                                   // 完走後：確定額に算入済みと明示（緑）
+    valEl.style.color="var(--ok)";
+    document.getElementById("todayEarnStat").textContent="✓ 確定・今月計に算入";
+  }else{                                         // 勤務中など：まだ確定額に未算入（金色）
+    valEl.style.color="var(--gold)";
+    document.getElementById("todayEarnStat").textContent=st.stat+"・確定前";
+  }
   if(st.active) startTicker(); else stopTicker();
+  // 完走の瞬間に今月確定額へ算入されるよう一度だけ再描画（先にフラグ更新でループ防止）
+  if(_lastDone!==null && _lastDone!==st.done){ _lastDone=st.done; render(); return; }
+  _lastDone=st.done;
 }
 
 /* ============================================================
@@ -456,18 +475,21 @@ function computeMonth(mk){
   const data = YEAR_DATA[mk];
   if(!data) return null;
   const wage = getWage();
+  const tk = todayKey();
+  const todayCounts = todayMoneyConfirmed();   // 今日は完走後のみ金額を算入
   // その月の記録を集計
   let six=0, eight=0, absent=0, otMin=0, earned=0;
   function pay(hours){ return wage ? hours*wage : 0; }
   for(const [dk,v] of Object.entries(records)){
     if(monthKey(dk)!==mk) continue;
     const k=recKind(v);
-    if(k==="6h"){ six++; earned+=pay(6); }            // 6h契約：有休も6h相当で確定
-    else if(k==="8h"){ eight++; earned+=pay(8); }
+    const moneyOK = (dk!==tk) || todayCounts;   // 日数カウントは常時、金額のみ時間ゲート
+    if(k==="6h"){ six++; if(moneyOK) earned+=pay(6); }            // 6h契約：有休も6h相当で確定
+    else if(k==="8h"){ eight++; if(moneyOK) earned+=pay(8); }
     else if(k==="absent"){ absent++; /* 無給：0円 */ }
-    else if(k==="8h2h"){ eight++; otMin+=120; earned+=pay(8)+pay(2)*1.25; }
-    else if(k==="8h1h"){ eight++; otMin+=60;  earned+=pay(8)+pay(1)*1.25; }
-    else if(k==="8hX"){ eight++; const mn=(v.min||0); otMin+=mn; earned+=pay(8)+pay(mn/60)*1.25; }
+    else if(k==="8h2h"){ eight++; otMin+=120; if(moneyOK) earned+=pay(8)+pay(2)*1.25; }
+    else if(k==="8h1h"){ eight++; otMin+=60;  if(moneyOK) earned+=pay(8)+pay(1)*1.25; }
+    else if(k==="8hX"){ eight++; const mn=(v.min||0); otMin+=mn; if(moneyOK) earned+=pay(8)+pay(mn/60)*1.25; }
   }
   return {data, six, eight, absent, otMin, earned, wage};
 }
