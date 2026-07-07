@@ -233,7 +233,7 @@
       </div>
       <button class="setbtn" id="schSave" style="margin-top:10px;margin-bottom:0">勤務時間帯を保存</button>
       <div class="msg" id="schMsg" style="text-align:left"></div>
-      <div class="k" style="margin-top:8px;margin-bottom:0">8h以上の日のみ休憩を無給として差し引き。6hの日は休憩なしで連続計算。未設定ならリアルタイム表示はしません。エクスポートJSONにも含まれます。</div>
+      <div class="k" style="margin-top:8px;margin-bottom:0">休憩は無給として差し引き、終業がその分後ろにずれます（勤務時間内に重なれば6hの日にも適用）。未設定ならリアルタイム表示はしません。エクスポートJSONにも含まれます。</div>
     </div>
     <div class="setrow">
       <div class="k">基準</div>
@@ -376,14 +376,16 @@ function getSchedule(){
   if(bs===null||be===null||be<=bs){ bs=null; be=null; }   // 休憩未設定/不正は無休憩扱い
   return {start, breakStart:bs, breakEnd:be};
 }
-/* 種別→支払対象の基本分/残業分/休憩有無。absent・未記録は null（稼ぎなし＝表示しない） */
+/* 種別→支払対象の基本分/残業分。absent・未記録は null（稼ぎなし＝表示しない）。
+   休憩の適用有無は種別では決めず、buildTimeline が時間帯の重なりで判定する
+   （6h勤務でも昼休みを跨ぐなら休憩が入り、終業はその分後ろにずれる）。 */
 function kindMinutes(v){
   const k=recKind(v);
-  if(k==="6h")   return {base:360, ot:0,          hasBreak:false};
-  if(k==="8h")   return {base:480, ot:0,          hasBreak:true};
-  if(k==="8h1h") return {base:480, ot:60,         hasBreak:true};
-  if(k==="8h2h") return {base:480, ot:120,        hasBreak:true};
-  if(k==="8hX")  return {base:480, ot:(v.min||0), hasBreak:true};
+  if(k==="6h")   return {base:360, ot:0};
+  if(k==="8h")   return {base:480, ot:0};
+  if(k==="8h1h") return {base:480, ot:60};
+  if(k==="8h2h") return {base:480, ot:120};
+  if(k==="8hX")  return {base:480, ot:(v.min||0)};
   return null;
 }
 /* 時計上の加算セグメント（分単位, rate=円/分）。休憩中は隙間にして加算停止を表現 */
@@ -394,7 +396,8 @@ function buildTimeline(v, sch, wage){
   const start=sch.start;
   const segs=[];
   let baseEnd, breakBand=null;
-  const useBreak = km.hasBreak && sch.breakStart!==null
+  // 休憩は種別を問わず、支払対象時間の内側に休憩開始が入る場合のみ適用
+  const useBreak = sch.breakStart!==null
                    && sch.breakStart>start && (sch.breakStart-start)<km.base;
   if(useBreak){
     const before = sch.breakStart - start;      // 休憩前の支払分
