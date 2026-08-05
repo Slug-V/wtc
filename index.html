@@ -256,7 +256,7 @@
 <div class="sheet" id="fracSheet" style="max-height:auto">
   <button class="close" data-close="frac">×</button>
   <h2>端数残業を記録</h2>
-  <div class="hint">8時間勤務に加える残業時間を分で指定（1分刻み）。</div>
+  <div class="hint" id="fracHint">8時間勤務に加える残業時間を分で指定（1分刻み）。</div>
   <div class="sheet-scroll">
     <div class="picker">
       <input type="number" id="fracMin" min="1" max="240" step="1" inputmode="numeric" value="48">
@@ -630,21 +630,32 @@ document.querySelectorAll("button.b").forEach(btn=>{
   btn.addEventListener("click",()=>{
     const act=btn.dataset.act;
     const dk=todayKey();
-    if(act==="8hX"){ openSheet("frac"); return; }
+    if(act==="8hX"){ openFrac(dk); return; }
     setRecord(dk, act);
     flash("記録しました：" + recLabel(records[dk]));
   });
 });
 
-/* 端数 */
+/* 端数 — 対象日を受け取って開く（今日の記録と訂正シートの両方から使う） */
+let fracTarget=null;
+function openFrac(dk){
+  fracTarget=dk;
+  const v=records[dk];
+  // 既に端数記録があればその値から編集を始める
+  if(recKind(v)==="8hX") document.getElementById("fracMin").value=v.min;
+  const base="8時間勤務に加える残業時間を分で指定（1分刻み）。";
+  document.getElementById("fracHint").textContent =
+    (dk===todayKey()) ? base : `${fmtDate(dk)}の記録を編集。${base}`;
+  openSheet("frac");
+}
 document.getElementById("fracSave").addEventListener("click",()=>{
   let mins=parseInt(document.getElementById("fracMin").value,10);
   if(isNaN(mins)||mins<1) mins=1;
   if(mins>240) mins=240;
-  const dk=todayKey();
+  const dk=fracTarget || todayKey();
   setRecord(dk, {k:"8hX", min:mins});
   closeSheet("frac");
-  flash("記録しました：" + recLabel(records[dk]));
+  if(dk===todayKey()) flash("記録しました：" + recLabel(records[dk]));
 });
 
 /* ============================================================
@@ -656,6 +667,7 @@ const KIND_OPTIONS = [
   ["8h","8h"],
   ["8h2h","8h ＋残業2h"],
   ["8h1h","8h ＋残業1h"],
+  ["8hX","8h ＋残業（分指定）…"],   // 選ぶと端数入力シートが開く
   ["absent","欠勤"],
 ];
 function buildHistory(){
@@ -680,21 +692,16 @@ function buildHistory(){
     const sel=document.createElement("select");
     KIND_OPTIONS.forEach(([val,lab])=>{
       const o=document.createElement("option");
-      o.value=val; o.textContent=lab;
+      // 端数記録の行では、選択肢に現在の分数を出して値が見えるようにする
+      o.value=val;
+      o.textContent=(val==="8hX"&&recKind(v)==="8hX") ? `8h ＋残業${v.min}分…` : lab;
       if(recKind(v)===val || (val===""&&!v)) o.selected=true;
-      // 端数は select では「8h＋残業」をまとめ扱いにせず、現状値があれば別表示
       sel.appendChild(o);
     });
-    // 端数記録は選択肢に無いので、現値が8hXなら一時オプション追加
-    if(recKind(v)==="8hX"){
-      const o=document.createElement("option");
-      o.value="8hX"; o.textContent=`8h ＋残業${v.min}分（現在値）`; o.selected=true;
-      sel.appendChild(o);
-    }
     sel.addEventListener("change",()=>{
       const nv=sel.value;
+      if(nv==="8hX"){ openFrac(dk); return; }   // 分の入力へ。反映は端数シート側
       if(nv==="") setRecord(dk,null);
-      else if(nv==="8hX"){ /* 現値維持 */ }
       else setRecord(dk,nv);
       tag.className="tag "+recTagClass(records[dk]);
       tag.textContent=recLabel(records[dk]);
@@ -724,6 +731,9 @@ function closeSheet(which){
   const bgEl=document.getElementById({hist:"histBg",set:"setBg",frac:"fracBg"}[which]);
   sheet.classList.remove("on");
   setTimeout(()=>bgEl.classList.remove("on"),260);
+  // 端数シートを閉じたら背後の訂正シートを records から作り直す。
+  // 保存内容の反映と、未保存で閉じたときの選択の巻き戻しを兼ねる。
+  if(which==="frac" && document.getElementById("histSheet").classList.contains("on")) buildHistory();
 }
 document.getElementById("openHistory").addEventListener("click",()=>openSheet("hist"));
 document.getElementById("openSettings").addEventListener("click",()=>openSheet("set"));
