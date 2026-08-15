@@ -506,8 +506,10 @@ function metricFor(mk){
   const {data, six, eight, absent, otMin} = c;
 
   if(data.mode==="overtime"){
-    // 要残業（割増前h）。欠勤は8h=480分の追加残業ノルマを上乗せ。
-    const targetMin = Math.round(data.otHours*60) + absent*480;
+    // 要残業（割増前h）。ゲージは全日8h勤務を基準に組む。基準(8h=480分)からの
+    // 不足分をそのまま要残業に上乗せする：欠勤は8h不足で+480分、6h日は2h不足で+120分。
+    // 消化済み(doneMin)の表示バーは固定なので、targetMinが伸びた分だけ相対的に縮んで見える。
+    const targetMin = Math.round(data.otHours*60) + absent*480 + six*120;
     const doneMin = otMin;
     const remainMin = Math.max(0, targetMin - doneMin);
     return {type:"overtime", targetMin, doneMin, remainMin};
