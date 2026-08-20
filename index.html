@@ -67,12 +67,45 @@
   .schin{background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:9px;
     padding:9px 10px;font-size:15px;font-family:inherit;font-variant-numeric:tabular-nums;}
 
-  /* gauge for overtime month */
-  .gauge{margin:6px auto 0;width:84%;height:14px;border-radius:8px;background:var(--bg2);
+  /* gauge for overtime month
+     4区分を左詰めの重ね塗りで表現：奥から順に描き、上に載る短いバーが左側を上書きする。
+       g-plan（奥・最長）＝過去確定＋今日の残業総量。斜線ハッチで「未消化の予定」を示す。
+       g-done（中）      ＝過去確定＋今日の消化済み。実線の明色で「今埋まっている所」。
+       g-past（手前・最短）＝過去確定分。実線の残業色で「既に銀行に入った分」。
+     結果：[0〜過去]=過去色, [過去〜過去+今日消化]=明色(進行中/当日確定), [そこ〜過去+今日総量]=ハッチ(予定)。
+     transition は linear 1秒。毎秒ティックの幅更新の間を補間し、実機の高解像度でも滑らかに動く。 */
+  .gauge{position:relative;margin:6px auto 0;width:84%;height:14px;border-radius:8px;background:var(--bg2);
     border:1px solid var(--line);overflow:hidden;}
-  .gauge>i{display:block;height:100%;background:linear-gradient(90deg,var(--ot),#f0a986);width:0;transition:width .35s ease;}
+  .gauge>i{position:absolute;left:0;top:0;height:100%;width:0;transition:width 1s linear;}
+  .g-plan{background:repeating-linear-gradient(135deg,
+    rgba(217,138,106,.42) 0 5px, rgba(217,138,106,.14) 5px 10px);}
+  .g-done{background:#f0a986;}
+  .g-past{background:var(--ot);}
   .gnums{font-variant-numeric:tabular-nums;font-size:13px;color:var(--dim);margin-top:7px;}
   .gnums b{color:var(--ot);font-weight:800;font-size:16px;}
+
+  /* ゲージのタップ領域＋内訳の吹き出し。凡例と実数は常設せず、タップで上に出す。
+     吹き出しはゲージの上（＝残業ノルマラベルの上）に浮かせるので、残り/必要hは隠れない。 */
+  .gaugeWrap{position:relative;padding:6px 0 2px;cursor:pointer;}
+  .gaugeWrap::after{content:"詳細";position:absolute;right:9%;top:-13px;font-size:10px;color:var(--faint);
+    opacity:.7;letter-spacing:.04em;}
+  .gpop{position:absolute;left:50%;bottom:calc(100% - 2px);transform:translateX(-50%) translateY(4px);
+    width:max-content;max-width:92%;background:var(--card);border:1px solid var(--line);border-radius:12px;
+    padding:8px 12px;box-shadow:0 8px 24px rgba(0,0,0,.45);z-index:5;
+    opacity:0;visibility:hidden;transition:opacity .16s ease, transform .16s ease;text-align:left;}
+  .gpop.on{opacity:1;visibility:visible;transform:translateX(-50%) translateY(0);}
+  .gpop::after{content:"";position:absolute;left:50%;top:100%;transform:translateX(-50%);
+    border:7px solid transparent;border-top-color:var(--card);}
+  .gpcap{font-size:11.5px;color:var(--dim);font-variant-numeric:tabular-nums;margin-bottom:6px;}
+  .gpcap b{color:var(--ot);font-weight:800;}
+  .gpbreak{display:flex;flex-wrap:wrap;gap:6px 12px;font-size:12px;color:var(--ink);
+    font-variant-numeric:tabular-nums;}
+  .gpitem{display:inline-flex;align-items:center;gap:5px;white-space:nowrap;}
+  .gpitem i{width:10px;height:10px;border-radius:3px;flex:none;}
+  .k-past{background:var(--ot);}
+  .k-done{background:#f0a986;}
+  .k-plan{background:repeating-linear-gradient(135deg,
+    rgba(217,138,106,.55) 0 3px, rgba(217,138,106,.18) 3px 6px);}
 
   /* ---- today strip ---- */
   .today{margin:2px 18px 0;padding:10px 14px;background:var(--card);border:1px solid var(--line);
@@ -388,30 +421,41 @@ function kindMinutes(v){
   if(k==="8hX")  return {base:480, ot:(v.min||0)};
   return null;
 }
-/* 時計上の加算セグメント（分単位, rate=円/分）。休憩中は隙間にして加算停止を表現 */
-function buildTimeline(v, sch, wage){
+/* 時計上の区切り（分単位・金額非依存）。始業・基本終業・残業帯・休憩帯を返す。
+   休憩は種別を問わず、支払対象時間の内側に休憩開始が入る場合のみ適用
+   （6h勤務でも昼休みを跨ぐなら休憩が入り、終業はその分後ろにずれる）。 */
+function buildAxis(v, sch){
   const km=kindMinutes(v);
-  if(!km || !sch || !wage) return null;
-  const baseRate=wage/60, otRate=baseRate*1.25;
+  if(!km || !sch) return null;
   const start=sch.start;
-  const segs=[];
   let baseEnd, breakBand=null;
-  // 休憩は種別を問わず、支払対象時間の内側に休憩開始が入る場合のみ適用
   const useBreak = sch.breakStart!==null
                    && sch.breakStart>start && (sch.breakStart-start)<km.base;
   if(useBreak){
     const before = sch.breakStart - start;      // 休憩前の支払分
     const after  = km.base - before;            // 休憩後の支払分
-    segs.push({from:start,        to:sch.breakStart,     rate:baseRate});
-    segs.push({from:sch.breakEnd, to:sch.breakEnd+after, rate:baseRate});
     baseEnd = sch.breakEnd + after;
     breakBand=[sch.breakStart, sch.breakEnd];
   }else{
-    segs.push({from:start, to:start+km.base, rate:baseRate});
-    baseEnd = start+km.base;
+    baseEnd = start + km.base;
   }
-  if(km.ot>0) segs.push({from:baseEnd, to:baseEnd+km.ot, rate:otRate});   // 残業は割増
-  return {segs, start, end:segs[segs.length-1].to, breakBand};
+  const otStart=baseEnd, otEnd=baseEnd+km.ot;
+  return {start, baseEnd, breakBand, otStart, otEnd, base:km.base, ot:km.ot, end:otEnd};
+}
+/* 時計上の加算セグメント（分単位, rate=円/分）。休憩中は隙間にして加算停止を表現 */
+function buildTimeline(v, sch, wage){
+  const ax=buildAxis(v, sch);
+  if(!ax || !wage) return null;
+  const baseRate=wage/60, otRate=baseRate*1.25;
+  const segs=[];
+  if(ax.breakBand){
+    segs.push({from:ax.start,        to:ax.breakBand[0], rate:baseRate});
+    segs.push({from:ax.breakBand[1], to:ax.baseEnd,      rate:baseRate});
+  }else{
+    segs.push({from:ax.start, to:ax.baseEnd, rate:baseRate});
+  }
+  if(ax.ot>0) segs.push({from:ax.otStart, to:ax.otEnd, rate:otRate});   // 残業は割増
+  return {segs, start:ax.start, end:ax.end, breakBand:ax.breakBand};
 }
 function earnedAt(segs, nowMin){
   let sum=0;
@@ -430,9 +474,24 @@ function nowMinutes(){
 function todayMoneyConfirmed(){
   const sch=getSchedule();
   if(!sch) return true;
-  const tl=buildTimeline(records[todayKey()], sch, getWage()||1);
-  if(!tl) return true;                 // 欠勤など（金額0）は確定扱いでよい
-  return nowMinutes() >= tl.end;
+  const ax=buildAxis(records[todayKey()], sch);
+  if(!ax) return true;                 // 欠勤など（金額0）は確定扱いでよい
+  return nowMinutes() >= ax.end;
+}
+/* 今日の残業の進捗（分）。total=今日の残業総量, done=時計上で既に消化した分。
+   時間帯未設定なら「当日分は確定扱い」でdone=total（進行表示なし・過去/当日の色分けのみ）。
+   残業帯は基本8h勤務の後半をそのまま延長する建て付けで、休憩は残業帯に入らない。 */
+function todayOvertimeProgress(){
+  const v=records[todayKey()];
+  const km=kindMinutes(v);
+  const total = km ? km.ot : 0;
+  if(total<=0) return {total:0, done:0};
+  const sch=getSchedule();
+  if(!sch) return {total, done:total};
+  const ax=buildAxis(v, sch);
+  if(!ax) return {total, done:total};
+  const done = Math.max(0, Math.min(total, nowMinutes() - ax.otStart));
+  return {total, done};
 }
 function todayEarnState(){
   const wage=getWage(), sch=getSchedule(), v=records[todayKey()];
@@ -450,13 +509,31 @@ function todayEarnState(){
   return {show:true, earned, stat, active, done};
 }
 let _ticker=null, _lastDone=null;
-function startTicker(){ if(_ticker || document.hidden) return; _ticker=setInterval(refreshTodayEarn,1000); }
+function startTicker(){ if(_ticker || document.hidden) return; _ticker=setInterval(tick,1000); }
 function stopTicker(){ if(_ticker){ clearInterval(_ticker); _ticker=null; } }
+/* 毎秒ティックが必要か：今日の発生額ピルが進行中、または残業月で今日の残業が進行中。
+   時給未設定でピルが出ない月でも、ゲージの「じりじり」進行のためにティックを回す。 */
+function tickNeeded(){
+  const st=todayEarnState();
+  if(st.show && st.active) return true;
+  const data=YEAR_DATA[monthKey(todayKey())];
+  if(data && data.mode==="overtime" && getSchedule()){
+    const prog=todayOvertimeProgress();
+    if(prog.total>0 && prog.done<prog.total) return true;
+  }
+  return false;
+}
+/* ピル・ゲージをまとめて更新し、ティックの要否を判定して起動/停止する。 */
+function tick(){
+  refreshTodayEarn();
+  refreshGauge();
+  if(tickNeeded()) startTicker(); else stopTicker();
+}
 function refreshTodayEarn(){
   const el=document.getElementById("todayEarn");
   if(!el) return;
   const st=todayEarnState();
-  if(!st.show){ el.style.display="none"; stopTicker(); _lastDone=null; return; }
+  if(!st.show){ el.style.display="none"; _lastDone=null; return; }
   el.style.display="";
   const valEl=document.getElementById("todayEarnVal");
   valEl.textContent = "¥"+Math.round(st.earned).toLocaleString("ja-JP");
@@ -467,11 +544,71 @@ function refreshTodayEarn(){
     valEl.style.color="var(--gold)";
     document.getElementById("todayEarnStat").textContent=st.stat+"・確定前";
   }
-  if(st.active) startTicker(); else stopTicker();
   // 完走の瞬間に今月確定額へ算入されるよう一度だけ再描画（先にフラグ更新でループ防止）
   if(_lastDone!==null && _lastDone!==st.done){ _lastDone=st.done; render(); return; }
   _lastDone=st.done;
 }
+/* 今日の残業の状態語。予定（残業帯前）→進行中（残業帯中）→確定（終業後）。総量0なら空。
+   進行中/確定の分岐は指定時刻の経過による代理判定（真の分岐＝勤務先タイムカードは実装不能）。 */
+function gaugeState(M){
+  if(M.todayTotal<=0) return "";
+  if(M.todayDone<=0) return "予定";
+  if(M.todayDone>=M.todayTotal) return "確定";
+  return "進行中";
+}
+/* 吹き出しの中身（キャプション＋各区画の実数を1行内訳に）。render と毎秒更新の両方から使う。
+   区画の分：月内過去=pastMin、進行中/確定=todayDone、予定=todayTotal-todayDone。 */
+function gaugePopHTML(M){
+  const done = Math.round(M.todayDone);
+  const plan = Math.round(M.todayTotal - M.todayDone);
+  const st = gaugeState(M);
+  const doneLbl = (M.todayTotal>0 && done>=M.todayTotal) ? "確定" : "進行中";   // 終業後は確定
+  const cap = M.todayTotal>0
+    ? `本日の残業 <b>${done}</b> ／ ${M.todayTotal} 分（${st}）`
+    : "本日の残業 記録なし";
+  // 0分の区画は出さない（進行中↔確定の入れ替わりと同様に、予定も0なら消す）。
+  // 例：終業後は予定0が消え「月内過去＋確定」の2件になる。
+  const items=[
+    [Math.round(M.pastMin), "k-past", "月内過去"],
+    [done,                  "k-done", doneLbl],
+    [plan,                  "k-plan", "予定"],
+  ].filter(([n])=>n>0)
+   .map(([n,cls,lbl])=>`<span class="gpitem"><i class="${cls}"></i>${lbl} ${n}分</span>`)
+   .join("");
+  return `<div class="gpcap">${cap}</div><div class="gpbreak">${items}</div>`;
+}
+/* 残業ゲージの3層の幅と、開いていれば吹き出しの中身を更新（構造は render が組む）。 */
+function refreshGauge(){
+  const past=document.getElementById("gPast");
+  if(!past) return;
+  const M=metricFor(monthKey(todayKey()));
+  if(M.type!=="overtime") return;
+  const pct = m => M.targetMin>0 ? Math.min(100, m/M.targetMin*100) : 0;
+  past.style.width=pct(M.pastMin)+"%";
+  document.getElementById("gDone").style.width=pct(M.bankedMin)+"%";
+  document.getElementById("gPlan").style.width=pct(M.plannedMin)+"%";
+  const pop=document.getElementById("gPop");
+  if(pop && _gpopOn) pop.innerHTML=gaugePopHTML(M);   // 開いている間だけ中身を更新
+}
+/* 吹き出しの開閉状態（render で作り直されても保持し、applyGpop で反映）。 */
+let _gpopOn=false;
+function applyGpop(){
+  const pop=document.getElementById("gPop");
+  if(!pop){ return; }
+  pop.classList.toggle("on", _gpopOn);
+  if(_gpopOn) refreshGauge();                    // 開いた瞬間に最新値へ
+}
+/* ゲージ帯のタップでトグル、外側タップで閉じる。単一ハンドラなので即閉じの心配なし。 */
+document.addEventListener("click", e=>{
+  const wrap=document.getElementById("gaugeWrap");
+  if(!wrap){ _gpopOn=false; return; }
+  if(wrap.contains(e.target)){
+    if(!document.getElementById("gPop").contains(e.target)) _gpopOn=!_gpopOn;
+  }else{
+    _gpopOn=false;
+  }
+  applyGpop();
+});
 
 /* ============================================================
    月内集計 → ダッシュボードのメトリクス
@@ -483,36 +620,49 @@ function computeMonth(mk){
   const tk = todayKey();
   const todayCounts = todayMoneyConfirmed();   // 今日は完走後のみ金額を算入
   // その月の記録を集計
-  let six=0, eight=0, absent=0, otMin=0, earned=0;
+  // otMinPast は過去日（当日より前）だけの残業分。ゲージの「過去確定」区画に使う。
+  // 未来日レコードは当日になるまで無かったことにする（import 等で入っても集計しない）。
+  let six=0, eight=0, absent=0, otMin=0, otMinPast=0, earned=0;
   function pay(hours){ return wage ? hours*wage : 0; }
   for(const [dk,v] of Object.entries(records)){
     if(monthKey(dk)!==mk) continue;
+    if(dk>tk) continue;                          // 未来日は無視
     const k=recKind(v);
     const moneyOK = (dk!==tk) || todayCounts;   // 日数カウントは常時、金額のみ時間ゲート
+    const past = (dk<tk);                        // 過去日（残業ゲージの確定区画用）
     if(k==="6h"){ six++; if(moneyOK) earned+=pay(6); }            // 6h契約：有休も6h相当で確定
     else if(k==="8h"){ eight++; if(moneyOK) earned+=pay(8); }
     else if(k==="absent"){ absent++; /* 無給：0円 */ }
-    else if(k==="8h2h"){ eight++; otMin+=120; if(moneyOK) earned+=pay(8)+pay(2)*1.25; }
-    else if(k==="8h1h"){ eight++; otMin+=60;  if(moneyOK) earned+=pay(8)+pay(1)*1.25; }
-    else if(k==="8hX"){ eight++; const mn=(v.min||0); otMin+=mn; if(moneyOK) earned+=pay(8)+pay(mn/60)*1.25; }
+    else if(k==="8h2h"){ eight++; otMin+=120; if(past) otMinPast+=120; if(moneyOK) earned+=pay(8)+pay(2)*1.25; }
+    else if(k==="8h1h"){ eight++; otMin+=60;  if(past) otMinPast+=60;  if(moneyOK) earned+=pay(8)+pay(1)*1.25; }
+    else if(k==="8hX"){ eight++; const mn=(v.min||0); otMin+=mn; if(past) otMinPast+=mn; if(moneyOK) earned+=pay(8)+pay(mn/60)*1.25; }
   }
-  return {data, six, eight, absent, otMin, earned, wage};
+  return {data, six, eight, absent, otMin, otMinPast, earned, wage};
 }
 
 /* 残枠/ノルマ/残業ゲージの計算 */
 function metricFor(mk){
   const c = computeMonth(mk);
   if(!c) return {type:"none"};
-  const {data, six, eight, absent, otMin} = c;
+  const {data, six, eight, absent, otMin, otMinPast} = c;
 
   if(data.mode==="overtime"){
     // 要残業（割増前h）。ゲージは全日8h勤務を基準に組む。基準(8h=480分)からの
     // 不足分をそのまま要残業に上乗せする：欠勤は8h不足で+480分、6h日は2h不足で+120分。
-    // 消化済み(doneMin)の表示バーは固定なので、targetMinが伸びた分だけ相対的に縮んで見える。
     const targetMin = Math.round(data.otHours*60) + absent*480 + six*120;
-    const doneMin = otMin;
-    const remainMin = Math.max(0, targetMin - doneMin);
-    return {type:"overtime", targetMin, doneMin, remainMin};
+    // 残業ゲージの3区画（分）。過去確定は当日を含まず、当日分は時計で消化済み/予定に割る。
+    //   pastMin    … 過去日の残業（確定・銀行に入った分）
+    //   bankedMin  … pastMin + 今日の消化済み（実線・明色で埋まる所）
+    //   plannedMin … pastMin + 今日の残業総量（＝計画量。ハッチの右端）
+    // 見出し「残り」は計画ベース（plannedMin基準）で、6h/欠勤タップの即時反映や時刻に対して
+    // 鋭敏に動かさない。時刻で動くのは bankedMin（消化済み）だけ。
+    const prog = todayOvertimeProgress();
+    const pastMin   = otMinPast;
+    const bankedMin = pastMin + prog.done;
+    const plannedMin= pastMin + prog.total;
+    const remainMin = Math.max(0, targetMin - plannedMin);
+    return {type:"overtime", targetMin, pastMin, bankedMin, plannedMin, remainMin,
+            todayTotal:prog.total, todayDone:prog.done};
   }
 
   // 6h-quota / 8h-quota は同一状態の別表示。
@@ -558,8 +708,8 @@ function render(){
   tvEl.textContent = recLabel(tv);
   tvEl.className = "v " + (tv? "" : "none");
 
-  // 今日の発生額（時間帯・時給が揃っていればリアルタイム表示）
-  refreshTodayEarn();
+  // 今日の発生額ピルとティックの起動（ゲージ幅は下でメトリクスと共に描く）。
+  tick();
 
   // overtime buttons only in overtime month
   document.getElementById("otRow").style.display =
@@ -575,14 +725,22 @@ function render(){
   const c = computeMonth(mk);
 
   if(M.type==="overtime"){
-    const pct = M.targetMin>0 ? Math.min(100, M.doneMin/M.targetMin*100) : 0;
+    const pct = m => M.targetMin>0 ? Math.min(100, m/M.targetMin*100) : 0;
     const remH = (M.remainMin/60);
     mEl.innerHTML = `
       <div class="mlabel ot">残業ノルマ（割増1.25倍）</div>
-      <div class="gauge"><i style="width:${pct}%"></i></div>
+      <div class="gaugeWrap" id="gaugeWrap">
+        <div class="gpop" id="gPop">${gaugePopHTML(M)}</div>
+        <div class="gauge">
+          <i class="g-plan" id="gPlan" style="width:${pct(M.plannedMin)}%"></i>
+          <i class="g-done" id="gDone" style="width:${pct(M.bankedMin)}%"></i>
+          <i class="g-past" id="gPast" style="width:${pct(M.pastMin)}%"></i>
+        </div>
+      </div>
       <div class="gnums">残り <b>${remH.toFixed(1)}</b> h ／ 必要 ${(M.targetMin/60).toFixed(1)} h</div>
       <div class="msub">8月は無理に平準化しない判断も可。</div>
       ${earnedHTML(c)}`;
+    applyGpop();               // 再描画で作り直された吹き出しに開閉状態を復元
     return;
   }
 
