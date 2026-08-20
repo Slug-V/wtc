@@ -83,13 +83,28 @@
   .g-past{background:var(--ot);}
   .gnums{font-variant-numeric:tabular-nums;font-size:13px;color:var(--dim);margin-top:7px;}
   .gnums b{color:var(--ot);font-weight:800;font-size:16px;}
-  .gtoday{font-variant-numeric:tabular-nums;font-size:12px;color:var(--faint);margin-top:3px;min-height:1.2em;}
-  .glegend{display:flex;justify-content:center;gap:14px;margin-top:6px;font-size:11px;color:var(--dim);}
-  .glegend span{display:inline-flex;align-items:center;gap:5px;}
-  .glegend i{width:11px;height:11px;border-radius:3px;display:inline-block;}
-  .glegend .k-past{background:var(--ot);}
-  .glegend .k-done{background:#f0a986;}
-  .glegend .k-plan{background:repeating-linear-gradient(135deg,
+
+  /* ゲージのタップ領域＋内訳の吹き出し。凡例と実数は常設せず、タップで上に出す。
+     吹き出しはゲージの上（＝残業ノルマラベルの上）に浮かせるので、残り/必要hは隠れない。 */
+  .gaugeWrap{position:relative;padding:6px 0 2px;cursor:pointer;}
+  .gaugeWrap::after{content:"詳細";position:absolute;right:9%;top:-13px;font-size:10px;color:var(--faint);
+    opacity:.7;letter-spacing:.04em;}
+  .gpop{position:absolute;left:50%;bottom:calc(100% - 2px);transform:translateX(-50%) translateY(4px);
+    width:max-content;max-width:92%;background:var(--card);border:1px solid var(--line);border-radius:12px;
+    padding:8px 12px;box-shadow:0 8px 24px rgba(0,0,0,.45);z-index:5;
+    opacity:0;visibility:hidden;transition:opacity .16s ease, transform .16s ease;text-align:left;}
+  .gpop.on{opacity:1;visibility:visible;transform:translateX(-50%) translateY(0);}
+  .gpop::after{content:"";position:absolute;left:50%;top:100%;transform:translateX(-50%);
+    border:7px solid transparent;border-top-color:var(--card);}
+  .gpcap{font-size:11.5px;color:var(--dim);font-variant-numeric:tabular-nums;margin-bottom:6px;}
+  .gpcap b{color:var(--ot);font-weight:800;}
+  .gpbreak{display:flex;flex-wrap:wrap;gap:6px 12px;font-size:12px;color:var(--ink);
+    font-variant-numeric:tabular-nums;}
+  .gpitem{display:inline-flex;align-items:center;gap:5px;white-space:nowrap;}
+  .gpitem i{width:10px;height:10px;border-radius:3px;flex:none;}
+  .k-past{background:var(--ot);}
+  .k-done{background:#f0a986;}
+  .k-plan{background:repeating-linear-gradient(135deg,
     rgba(217,138,106,.55) 0 3px, rgba(217,138,106,.18) 3px 6px);}
 
   /* ---- today strip ---- */
@@ -533,7 +548,36 @@ function refreshTodayEarn(){
   if(_lastDone!==null && _lastDone!==st.done){ _lastDone=st.done; render(); return; }
   _lastDone=st.done;
 }
-/* 残業ゲージの3層の幅と数値のみを更新（構造は render が組む）。残業月以外は何もしない。 */
+/* 今日の残業の状態語。予定（残業帯前）→進行中（残業帯中）→確定（終業後）。総量0なら空。
+   進行中/確定の分岐は指定時刻の経過による代理判定（真の分岐＝勤務先タイムカードは実装不能）。 */
+function gaugeState(M){
+  if(M.todayTotal<=0) return "";
+  if(M.todayDone<=0) return "予定";
+  if(M.todayDone>=M.todayTotal) return "確定";
+  return "進行中";
+}
+/* 吹き出しの中身（キャプション＋各区画の実数を1行内訳に）。render と毎秒更新の両方から使う。
+   区画の分：月内過去=pastMin、進行中/確定=todayDone、予定=todayTotal-todayDone。 */
+function gaugePopHTML(M){
+  const done = Math.round(M.todayDone);
+  const plan = Math.round(M.todayTotal - M.todayDone);
+  const st = gaugeState(M);
+  const doneLbl = (M.todayTotal>0 && done>=M.todayTotal) ? "確定" : "進行中";   // 終業後は確定
+  const cap = M.todayTotal>0
+    ? `本日の残業 <b>${done}</b> ／ ${M.todayTotal} 分（${st}）`
+    : "本日の残業 記録なし";
+  // 0分の区画は出さない（進行中↔確定の入れ替わりと同様に、予定も0なら消す）。
+  // 例：終業後は予定0が消え「月内過去＋確定」の2件になる。
+  const items=[
+    [Math.round(M.pastMin), "k-past", "月内過去"],
+    [done,                  "k-done", doneLbl],
+    [plan,                  "k-plan", "予定"],
+  ].filter(([n])=>n>0)
+   .map(([n,cls,lbl])=>`<span class="gpitem"><i class="${cls}"></i>${lbl} ${n}分</span>`)
+   .join("");
+  return `<div class="gpcap">${cap}</div><div class="gpbreak">${items}</div>`;
+}
+/* 残業ゲージの3層の幅と、開いていれば吹き出しの中身を更新（構造は render が組む）。 */
 function refreshGauge(){
   const past=document.getElementById("gPast");
   if(!past) return;
@@ -543,11 +587,28 @@ function refreshGauge(){
   past.style.width=pct(M.pastMin)+"%";
   document.getElementById("gDone").style.width=pct(M.bankedMin)+"%";
   document.getElementById("gPlan").style.width=pct(M.plannedMin)+"%";
-  const tEl=document.getElementById("gToday");
-  if(tEl) tEl.textContent = M.todayTotal>0
-    ? `本日の残業 ${Math.round(M.todayDone)} ／ ${M.todayTotal} 分`+(M.todayDone>=M.todayTotal?"（消化済み）":"（消化中）")
-    : "";
+  const pop=document.getElementById("gPop");
+  if(pop && _gpopOn) pop.innerHTML=gaugePopHTML(M);   // 開いている間だけ中身を更新
 }
+/* 吹き出しの開閉状態（render で作り直されても保持し、applyGpop で反映）。 */
+let _gpopOn=false;
+function applyGpop(){
+  const pop=document.getElementById("gPop");
+  if(!pop){ return; }
+  pop.classList.toggle("on", _gpopOn);
+  if(_gpopOn) refreshGauge();                    // 開いた瞬間に最新値へ
+}
+/* ゲージ帯のタップでトグル、外側タップで閉じる。単一ハンドラなので即閉じの心配なし。 */
+document.addEventListener("click", e=>{
+  const wrap=document.getElementById("gaugeWrap");
+  if(!wrap){ _gpopOn=false; return; }
+  if(wrap.contains(e.target)){
+    if(!document.getElementById("gPop").contains(e.target)) _gpopOn=!_gpopOn;
+  }else{
+    _gpopOn=false;
+  }
+  applyGpop();
+});
 
 /* ============================================================
    月内集計 → ダッシュボードのメトリクス
@@ -666,25 +727,20 @@ function render(){
   if(M.type==="overtime"){
     const pct = m => M.targetMin>0 ? Math.min(100, m/M.targetMin*100) : 0;
     const remH = (M.remainMin/60);
-    const todayLine = M.todayTotal>0
-      ? `本日の残業 ${Math.round(M.todayDone)} ／ ${M.todayTotal} 分`+(M.todayDone>=M.todayTotal?"（消化済み）":"（消化中）")
-      : "";
     mEl.innerHTML = `
       <div class="mlabel ot">残業ノルマ（割増1.25倍）</div>
-      <div class="gauge">
-        <i class="g-plan" id="gPlan" style="width:${pct(M.plannedMin)}%"></i>
-        <i class="g-done" id="gDone" style="width:${pct(M.bankedMin)}%"></i>
-        <i class="g-past" id="gPast" style="width:${pct(M.pastMin)}%"></i>
+      <div class="gaugeWrap" id="gaugeWrap">
+        <div class="gpop" id="gPop">${gaugePopHTML(M)}</div>
+        <div class="gauge">
+          <i class="g-plan" id="gPlan" style="width:${pct(M.plannedMin)}%"></i>
+          <i class="g-done" id="gDone" style="width:${pct(M.bankedMin)}%"></i>
+          <i class="g-past" id="gPast" style="width:${pct(M.pastMin)}%"></i>
+        </div>
       </div>
       <div class="gnums">残り <b>${remH.toFixed(1)}</b> h ／ 必要 ${(M.targetMin/60).toFixed(1)} h</div>
-      <div class="gtoday" id="gToday">${todayLine}</div>
-      <div class="glegend">
-        <span><i class="k-past"></i>過去確定</span>
-        <span><i class="k-done"></i>今日の消化</span>
-        <span><i class="k-plan"></i>今日の予定</span>
-      </div>
       <div class="msub">8月は無理に平準化しない判断も可。</div>
       ${earnedHTML(c)}`;
+    applyGpop();               // 再描画で作り直された吹き出しに開閉状態を復元
     return;
   }
 
