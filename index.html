@@ -791,11 +791,20 @@ function flash(msg){
   flash._t=setTimeout(()=>{el.textContent="";},2200);
 }
 
+/* 端数記録(8hX)を他のプリセットで上書きする直前だけ確認を挟む。
+   分数は一度失うと復元できないため。それ以外の変更は従来どおり即時。 */
+function confirmFracOverwrite(dk, newVal){
+  const cur=records[dk];
+  if(recKind(cur)!=="8hX") return true;
+  return confirm(`端数残業(${cur.min}分)の記録を破棄して「${recLabel(newVal)}」に変更しますか？`);
+}
+
 document.querySelectorAll("button.b").forEach(btn=>{
   btn.addEventListener("click",()=>{
     const act=btn.dataset.act;
     const dk=todayKey();
     if(act==="8hX"){ openFrac(dk); return; }
+    if(!confirmFracOverwrite(dk, act)) return;
     setRecord(dk, act);
     flash("記録しました：" + recLabel(records[dk]));
   });
@@ -866,6 +875,7 @@ function buildHistory(){
     sel.addEventListener("change",()=>{
       const nv=sel.value;
       if(nv==="8hX"){ openFrac(dk); return; }   // 分の入力へ。反映は端数シート側
+      if(!confirmFracOverwrite(dk, nv)){ sel.value="8hX"; return; }
       if(nv==="") setRecord(dk,null);
       else setRecord(dk,nv);
       tag.className="tag "+recTagClass(records[dk]);
