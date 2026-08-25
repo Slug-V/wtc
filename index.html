@@ -689,6 +689,12 @@ function metricFor(mk){
   }
 }
 
+/* 残業ノルマの「残り」表示。残り2時間以下は分刻み（最終盤の精度を上げる）、超は従来の時間表示。
+   remainMin は既に整数分なので分表示はそのまま。「必要」（固定の総量）は常に時間表示のまま。 */
+function remainLabel(min){
+  return min<=120 ? `<b>${min}</b> 分` : `<b>${(min/60).toFixed(1)}</b> h`;
+}
+
 /* ============================================================
    レンダリング
    ============================================================ */
@@ -726,7 +732,6 @@ function render(){
 
   if(M.type==="overtime"){
     const pct = m => M.targetMin>0 ? Math.min(100, m/M.targetMin*100) : 0;
-    const remH = (M.remainMin/60);
     mEl.innerHTML = `
       <div class="mlabel ot">残業ノルマ（割増1.25倍）</div>
       <div class="gaugeWrap" id="gaugeWrap">
@@ -737,7 +742,7 @@ function render(){
           <i class="g-past" id="gPast" style="width:${pct(M.pastMin)}%"></i>
         </div>
       </div>
-      <div class="gnums">残り <b>${remH.toFixed(1)}</b> h ／ 必要 ${(M.targetMin/60).toFixed(1)} h</div>
+      <div class="gnums">残り ${remainLabel(M.remainMin)} ／ 必要 ${(M.targetMin/60).toFixed(1)} h</div>
       <div class="msub">8月は無理に平準化しない判断も可。</div>
       ${earnedHTML(c)}`;
     applyGpop();               // 再描画で作り直された吹き出しに開閉状態を復元
